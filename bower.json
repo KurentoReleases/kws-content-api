@@ -1,0 +1,27 @@
+{
+  "name": "kws-content-api",
+  "description": "Kurento Content Management API for Web SDK",
+  "license": "LGPL",
+  "keywords": [
+    "API",
+    "content",
+    "Kurento",
+    "KWS",
+    "SDK",
+    "web",
+    "WebRTC"
+  ],
+  "homepage": "http://www.kurento.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kurento/kws-content-api.git"
+  },
+  "authors": [
+    "Kurento <info@kurento.org> (http://kurento.org)",
+    {
+      "name": "Jesús Leganés Combarro 'piranna'",
+      "email": "piranna@gmail.com",
+      "url": "http://pirannafs.blogspot.com.es"
+    }
+  ]
+}
