@@ -2174,6 +2174,7 @@ RpcBuilder.RpcNotification = RpcNotification;
 
 module.exports = RpcBuilder;
 
+RpcBuilder.clients = clients;
 RpcBuilder.packers = packers;
 
 },{"./Mapper":8,"./packers":12,"events":6,"inherits":7}],10:[function(require,module,exports){
