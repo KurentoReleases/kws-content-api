@@ -2031,18 +2031,18 @@ function RpcBuilder(packer, options, transport, onRequest)
 
       message = packer.pack(message, id);
 
-      var request =
-      {
-        message:         message,
-        callback:        dispatchCallback,
-        responseMethods: responseMethods[method] || {}
-      };
-
       function dispatchCallback(error, result)
       {
         self.cancel(message);
 
         callback(error, result);
+      };
+      
+      var request =
+      {
+        message:         message,
+        callback:        dispatchCallback,
+        responseMethods: responseMethods[method] || {}
       };
 
       var encode_transport = unifyTransport(transport);
@@ -2409,4 +2409,4 @@ if (WebSocket) ws.prototype = WebSocket.prototype;
 
 },{}],16:[function(require,module,exports){
 module.exports = XMLHttpRequest;
-},{}]},{},[5])
+},{}]},{},[5]);
