@@ -149,7 +149,8 @@ function Content(url, options)
   }
 
 
-  var rpc = new RpcBuilder(JsonRPC, {request_timeout: 30000});
+  var rpc = new RpcBuilder(JsonRPC,
+                           {request_timeout: options.request_timeout || 30000});
 
 
   function doRPC(method, params, callback)
@@ -1584,17 +1585,31 @@ function unifyTransport(transport)
 {
   if(!transport) return;
 
+  // Transport as a function
   if(transport instanceof Function)
+    return {send: transport};
+
+  // WebSocket & DataChannel
+  if(transport.send instanceof Function)
     return transport;
 
-  if(transport.send instanceof Function)
-    return transport.send.bind(transport);
-
+  // Message API (Inter-window & WebWorker)
   if(transport.postMessage instanceof Function)
-    return transport.postMessage.bind(transport);
+  {
+    transport.send = transport.postMessage;
+    return transport;
+  }
+
+  // Stream API
+  if(transport.write instanceof Function)
+  {
+    transport.send = transport.write;
+    return transport;
+  }
 
   // Transports that only can receive messages, but not send
   if(transport.onmessage !== undefined) return;
+  if(transport.pause instanceof Function) return;
 
   throw new SyntaxError("Transport is not a function nor a valid object");
 };
@@ -1621,6 +1636,14 @@ function RpcNotification(method, params)
  * @class
  *
  * @constructor
+ *
+ * @param {object} packer
+ *
+ * @param {object} [options]
+ *
+ * @param {object} [transport]
+ *
+ * @param {Function} [onRequest]
  */
 function RpcBuilder(packer, options, transport, onRequest)
 {
@@ -1635,7 +1658,17 @@ function RpcBuilder(packer, options, transport, onRequest)
   var responseMethods = unifyResponseMethods(packer.responseMethods);
 
 
-  if(options instanceof Function || options && options.send instanceof Function)
+  if(options instanceof Function)
+  {
+    if(transport != undefined)
+      throw new SyntaxError("There can't be parameters after onRequest");
+
+    onRequest = options;
+    transport = undefined;
+    options   = undefined;
+  };
+
+  if(options && options.send instanceof Function)
   {
     if(transport && !(transport instanceof Function))
       throw new SyntaxError("Only a function can be after transport");
@@ -1645,8 +1678,16 @@ function RpcBuilder(packer, options, transport, onRequest)
     options   = undefined;
   };
 
-  if(transport instanceof Function
-  || transport && transport.send instanceof Function)
+  if(transport instanceof Function)
+  {
+    if(onRequest != undefined)
+      throw new SyntaxError("There can't be parameters after onRequest");
+
+    onRequest = transport;
+    transport = undefined;
+  };
+
+  if(transport && transport.send instanceof Function)
     if(onRequest && !(onRequest instanceof Function))
       throw new SyntaxError("Only a function can be after transport");
 
@@ -1666,9 +1707,7 @@ function RpcBuilder(packer, options, transport, onRequest)
 
   function transportMessage(event)
   {
-    var message = self.decode(event.data);
-    if(message)
-      self.emit('request', message);
+    self.decode(event.data || event);
   };
 
   Object.defineProperty(this, 'transport',
@@ -1681,12 +1720,28 @@ function RpcBuilder(packer, options, transport, onRequest)
     set: function(value)
     {
       // Remove listener from old transport
-      if(transport && transport.onmessage !== undefined)
-        transport.removeEventListener('message', transportMessage);
+      if(transport)
+      {
+        // W3C transports
+        if(transport.removeEventListener)
+          transport.removeEventListener('message', transportMessage);
+
+        // Node.js Streams API
+        else if(transport.removeListener)
+          transport.removeListener('data', transportMessage);
+      };
 
       // Set listener on new transport
-      if(value && value.onmessage !== undefined)
-        value.addEventListener('message', transportMessage);
+      if(value)
+      {
+        // W3C transports
+        if(value.addEventListener)
+          value.addEventListener('message', transportMessage);
+
+        // Node.js Streams API
+        else if(value.addListener)
+          value.addListener('data', transportMessage);
+      };
 
       transport = unifyTransport(value);
     }
@@ -1786,10 +1841,7 @@ function RpcBuilder(packer, options, transport, onRequest)
 
     var responseMethod = responseMethods[method];
 
-    this.pack = function()
-    {
-      return packer.pack(this, id);
-    }
+    this.pack = packer.pack.bind(packer, this, id)
 
     /**
      * Generate a response to this request
@@ -1897,7 +1949,7 @@ function RpcBuilder(packer, options, transport, onRequest)
       transport = transport || this.transport || self.transport;
 
       if(transport)
-        return transport(message);
+        return transport.send(message);
 
       return message;
     }
@@ -1945,10 +1997,7 @@ function RpcBuilder(packer, options, transport, onRequest)
     // Request & processed responses
     this.cancel();
 
-    processedResponses.forEach(function(timeout)
-    {
-      clearTimeout(timeout);
-    });
+    processedResponses.forEach(clearTimeout);
 
     // Responses
     responses.forEach(function(response)
@@ -2045,6 +2094,13 @@ function RpcBuilder(packer, options, transport, onRequest)
         responseMethods: responseMethods[method] || {}
       };
 
+      var request =
+      {
+        message:         message,
+        callback:        dispatchCallback,
+        responseMethods: responseMethods[method] || {}
+      };
+
       var encode_transport = unifyTransport(transport);
 
       function sendRequest(transport)
@@ -2056,7 +2112,7 @@ function RpcBuilder(packer, options, transport, onRequest)
 
         transport = transport || encode_transport || self.transport;
         if(transport)
-          return transport(message);
+          return transport.send(message);
 
         return message;
       };
@@ -2094,7 +2150,7 @@ function RpcBuilder(packer, options, transport, onRequest)
 
     transport = transport || self.transport;
     if(transport)
-      return transport(message);
+      return transport.send(message);
 
     return message;
   };
@@ -2138,7 +2194,12 @@ function RpcBuilder(packer, options, transport, onRequest)
 
     // Notification
     if(id == undefined && ack == undefined)
-      return new RpcNotification(method, params);
+    {
+      var notification = new RpcNotification(method, params);
+
+      if(self.emit('request', notification)) return;
+      return notification;
+    };
 
 
     function processRequest()
@@ -2149,11 +2210,14 @@ function RpcBuilder(packer, options, transport, onRequest)
       {
         var response = responses.get(id, from);
         if(response)
-          return transport(response.message);
+          return transport.send(response.message);
       };
 
       var idAck = (id != undefined) ? id : ack;
-      return new RpcRequest(method, params, idAck, from, transport);
+      var request = new RpcRequest(method, params, idAck, from, transport);
+
+      if(self.emit('request', request)) return;
+      return request;
     };
 
     function processResponse(request, error, result)
